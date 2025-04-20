@@ -1,52 +1,16 @@
-from flask import Flask  # Importação no início com outras bibliotecas
-import os
-from threading import Thread
 import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp
+import os
 from dotenv import load_dotenv
 import tempfile
 import re
 from typing import Optional
-import signal
-import sys
-from threading import Event
 
-os.system("apt-get update && apt-get install ffmpeg -y")
-
-# Configuração do Flask
-app = Flask(__name__)
-shutdown_event = Event()
-
-@app.route('/')
-def home():
-    return "🎶 Miku Bot está online! (˶ᵔ ᵕ ᵔ˶)"
-
-def signal_handler(sig, frame):
-    print("\nDesligando o bot graciosamente...")
-    shutdown_event.set()
-    # Encerra o processo principal
-    os._exit(0)
-
-def keep_alive():
-    def run_flask():
-        while not shutdown_event.is_set():
-            try:
-                app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
-            except Exception as e:
-                print(f"Erro no servidor Flask: {e}")
-                if not shutdown_event.is_set():
-                    print("Reiniciando servidor Flask em 5 segundos...")
-                    shutdown_event.wait(5)
-
-    flask_thread = Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    return flask_thread
-
-# Configurações iniciais
 load_dotenv()
-TOKEN = os.environ.get('DISCORD_TOKEN')
+
+TOKEN = os.getenv('DISCORD_TOKEN')
 
 # Dicionários de tradução
 LANGUAGES = {
@@ -128,13 +92,14 @@ LANGUAGES = {
     }
 }
 
-
+    
 
 # Configuração inicial
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
+
 # Database simples em memória (substitua por um banco de dados real para produção)
 user_languages = {}
 
@@ -150,14 +115,14 @@ async def on_ready():
 @bot.tree.command(name="help", description="Show help menu with all commands")
 async def help_command(interaction: discord.Interaction):
     lang = get_user_language(interaction.user.id)
-
+    
     # Criar embed bonito
     embed = discord.Embed(
         title=LANGUAGES[lang]["help_title"],
         description=LANGUAGES[lang]["help_description"],
         color=0xff9ec8  # Cor rosa pastel
     )
-
+    
     # Adicionar campos de comandos
     for cmd, desc in LANGUAGES[lang]["commands"].items():
         embed.add_field(
@@ -165,7 +130,7 @@ async def help_command(interaction: discord.Interaction):
             value=f"*Usage:* {LANGUAGES[lang]['usage'][cmd]}",
             inline=False
         )
-
+    
     # Adicionar seção de erros
     errors_text = "\n".join(LANGUAGES[lang]["errors"].values())
     embed.add_field(
@@ -173,7 +138,7 @@ async def help_command(interaction: discord.Interaction):
         value=errors_text,
         inline=False
     )
-
+    
     # Adicionar notas
     notes_text = "\n".join(LANGUAGES[lang]["notes"])
     embed.add_field(
@@ -181,10 +146,10 @@ async def help_command(interaction: discord.Interaction):
         value=notes_text,
         inline=False
     )
-
+    
     # Adicionar footer fofo
     embed.set_footer(text="( ˶ᵔ ᵕ ᵔ˶ ) Miku is here to help!")
-
+    
     await interaction.response.send_message(embed=embed)
 
 # Comando /language
@@ -227,7 +192,6 @@ async def try_send_file(interaction, file_path, info, formato, original_format=N
                 mp3_path = file_path.replace(f'.{original_format}', '.mp3')
                 ydl_opts = {
                     'format': 'bestaudio/best',
-                    'ffmpeg_location': '/usr/bin/ffmpeg',
                     'postprocessors': [{
                         'key': 'FFmpegExtractAudio',
                         'preferredcodec': 'mp3',
@@ -279,18 +243,21 @@ async def download(interaction: discord.Interaction, url: str, formato: app_comm
         with tempfile.TemporaryDirectory() as temp_dir:
             ydl_opts = {
                 'format': 'bestaudio/best',
-                'ffmpeg_location': '/usr/bin/ffmpeg',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': formato.value,
                     'preferredquality': '192',
                 }],
                 'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
-                'quiet': True
+                'quiet': True,
+                'extract_flat': True
             }
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    
+                    ydl_opts['extract_flat'] = False
                     info = ydl.extract_info(url, download=True)
                     file_path = ydl.prepare_filename(info).replace('.webm', f'.{formato.value}')
 
@@ -306,6 +273,7 @@ async def download(interaction: discord.Interaction, url: str, formato: app_comm
             
             if not success and formato.value != "mp3":
                 await interaction.followup.send(LANGUAGES[lang]["converting"])
+                
                 mp3_path = file_path.replace(f'.{formato.value}', '.mp3')
                 ydl_opts['postprocessors'][0]['preferredcodec'] = 'mp3'
                 ydl_opts['outtmpl'] = mp3_path.replace('.mp3', '') + '.%(ext)s'
@@ -322,19 +290,11 @@ async def download(interaction: discord.Interaction, url: str, formato: app_comm
             if os.path.exists(file_path):
                 os.remove(file_path)
 
+    except yt_dlp.utils.DownloadError as e:
+        await interaction.followup.send(f"❌ Error processing video: {str(e)}")
+    except ValueError as e:
+        await interaction.followup.send(str(e))
     except Exception as e:
-        await interaction.followup.send(f"❌ {str(e)}")
+        await interaction.followup.send(f"❌ Unexpected error: {str(e)}")
 
-
-# Função principal
-if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    flask_thread = keep_alive()
-    
-    try:
-        bot.run(TOKEN)
-    except KeyboardInterrupt:
-        print("\nBot encerrado pelo usuário")
-    finally:
-        shutdown_event.set()
-        flask_thread.join(timeout=1)
+bot.run(TOKEN)
