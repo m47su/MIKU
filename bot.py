@@ -169,10 +169,16 @@ async def set_language(interaction: discord.Interaction, language: app_commands.
 # Comando /hello
 @bot.tree.command(name="hello", description="Say hello to Miku! ♡(˃͈ ˂͈ )")
 async def hello(interaction: discord.Interaction):
-    lang = get_user_language(interaction.user.id)
-    await interaction.response.send_message(
-        LANGUAGES[lang]["hello_msg"].format(user=interaction.user.mention)
-    )
+    try:
+        lang = get_user_language(interaction.user.id)
+        await interaction.response.send_message(
+            LANGUAGES[lang]["hello_msg"].format(user=interaction.user.mention)
+        )
+    except Exception as e:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"❌ Unexpected error: {str(e)}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ Unexpected error: {str(e)}", ephemeral=True)
 
 def is_valid_url(url):
     youtube_regex = (
@@ -262,12 +268,9 @@ async def download(interaction: discord.Interaction, url: str, formato: app_comm
                     file_path = ydl.prepare_filename(info).replace('.webm', f'.{formato.value}')
 
             except yt_dlp.utils.DownloadError as e:
-                if "is not a valid URL" in str(e):
-                    raise ValueError(LANGUAGES[lang]["invalid_url"])
-                elif "Video unavailable" in str(e):
-                    raise ValueError(LANGUAGES[lang]["video_unavailable"])
-                else:
-                    raise
+                # Adicionar detalhes ao erro de download
+                await interaction.followup.send(f"❌ Erro ao baixar o vídeo: {str(e)}")
+                raise
 
             success = await try_send_file(interaction, file_path, info, formato.value)
             
@@ -278,8 +281,12 @@ async def download(interaction: discord.Interaction, url: str, formato: app_comm
                 ydl_opts['postprocessors'][0]['preferredcodec'] = 'mp3'
                 ydl_opts['outtmpl'] = mp3_path.replace('.mp3', '') + '.%(ext)s'
                 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([url])
+                except Exception as e:
+                    await interaction.followup.send(f"❌ Erro durante a conversão para MP3: {str(e)}")
+                    return
                 
                 if os.path.exists(mp3_path):
                     await try_send_file(interaction, mp3_path, info, "mp3")
@@ -291,10 +298,11 @@ async def download(interaction: discord.Interaction, url: str, formato: app_comm
                 os.remove(file_path)
 
     except yt_dlp.utils.DownloadError as e:
-        await interaction.followup.send(f"❌ Error processing video: {str(e)}")
+        await interaction.followup.send(f"❌ Erro ao processar o vídeo: {str(e)}")
     except ValueError as e:
         await interaction.followup.send(str(e))
     except Exception as e:
-        await interaction.followup.send(f"❌ Unexpected error: {str(e)}")
+        await interaction.followup.send(f"❌ Erro inesperado: {str(e)}")
+
 
 bot.run(TOKEN)
